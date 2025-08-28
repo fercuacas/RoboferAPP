@@ -52,6 +52,10 @@ public class BtClient {
         this.device = d;
     }
 
+    public BluetoothDevice getDevice() {
+        return device;
+    }
+
     public void connect() throws Exception {
         if (device == null) throw new IllegalStateException("No device selected");
         adapter.cancelDiscovery();
