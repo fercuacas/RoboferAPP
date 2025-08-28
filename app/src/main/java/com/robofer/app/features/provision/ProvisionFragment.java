@@ -1,7 +1,12 @@
 package com.robofer.app.features.provision;
 
 import android.Manifest;
+import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.os.Build;
 import android.os.Bundle;
 
@@ -23,6 +28,34 @@ public class ProvisionFragment extends Fragment {
     private FragmentProvisionBinding b;
     private BtClient bt;
     private static final int REQ_BT = 100;
+    private BluetoothAdapter adapter;
+    private final java.util.ArrayList<BluetoothDevice> found = new java.util.ArrayList<>();
+    private final BroadcastReceiver receiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            String action = intent.getAction();
+            if (BluetoothDevice.ACTION_FOUND.equals(action)) {
+                BluetoothDevice d = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
+                if (d != null && !containsDevice(d)) {
+                    found.add(d);
+                }
+            } else if (BluetoothAdapter.ACTION_DISCOVERY_FINISHED.equals(action)) {
+                showDeviceDialog();
+            } else if (BluetoothDevice.ACTION_BOND_STATE_CHANGED.equals(action)) {
+                BluetoothDevice d = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
+                if (bt.getDevice() != null && d != null &&
+                        bt.getDevice().getAddress().equals(d.getAddress())) {
+                    int state = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR);
+                    if (state == BluetoothDevice.BOND_BONDED) {
+                        requireActivity().runOnUiThread(() -> b.tvStatus.setText("Emparejado"));
+                        connectInBackground();
+                    } else if (state == BluetoothDevice.BOND_NONE) {
+                        requireActivity().runOnUiThread(() -> b.tvStatus.setText("Emparejamiento cancelado"));
+                    }
+                }
+            }
+        }
+    };
 
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, ViewGroup container,
@@ -36,6 +69,13 @@ public class ProvisionFragment extends Fragment {
         super.onViewCreated(v, s);
 
         bt = new BtClient(requireContext());
+        adapter = BluetoothAdapter.getDefaultAdapter();
+
+        IntentFilter f = new IntentFilter();
+        f.addAction(BluetoothDevice.ACTION_FOUND);
+        f.addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED);
+        f.addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
+        requireContext().registerReceiver(receiver, f);
 
         b.btnSelectDevice.setOnClickListener(v1 -> selectDevice());
         b.btnListNets.setOnClickListener(v12 -> listNetworks());
@@ -61,25 +101,47 @@ public class ProvisionFragment extends Fragment {
             b.tvStatus.setText("Faltan permisos Bluetooth");
             return;
         }
-        BluetoothDevice[] devices = bt.getPairedDevices();
-        if (devices.length == 0) {
-            b.tvStatus.setText("No hay dispositivos emparejados. Empareja el robot en Ajustes.");
+        found.clear();
+        if (adapter.isDiscovering()) adapter.cancelDiscovery();
+        adapter.startDiscovery();
+        b.tvStatus.setText("Buscando dispositivos...");
+    }
+
+    private void showDeviceDialog() {
+        if (found.isEmpty()) {
+            requireActivity().runOnUiThread(() -> b.tvStatus.setText("No se encontraron dispositivos"));
             return;
         }
-        String[] names = new String[devices.length];
-        for (int i = 0; i < devices.length; i++) {
-            String n = devices[i].getName();
-            if (n == null) n = devices[i].getAddress();
-            names[i] = n + " (" + devices[i].getAddress() + ")";
+        String[] names = new String[found.size()];
+        for (int i = 0; i < found.size(); i++) {
+            BluetoothDevice d = found.get(i);
+            String n = d.getName();
+            if (n == null) n = d.getAddress();
+            names[i] = n + " (" + d.getAddress() + ")";
         }
+        requireActivity().runOnUiThread(() -> {
+            new AlertDialog.Builder(requireContext())
+                    .setTitle("Elige el robot")
+                    .setItems(names, (dlg, w) -> {
+                        BluetoothDevice d = found.get(w);
+                        bt.selectDevice(d);
+                        b.tvDevice.setText("Dispositivo: " + names[w]);
+                        adapter.cancelDiscovery();
+                        if (d.getBondState() == BluetoothDevice.BOND_BONDED) {
+                            connectInBackground();
+                        } else {
+                            b.tvStatus.setText("Emparejando...");
+                            d.createBond();
+                        }
+                    }).show();
+        });
+    }
 
-        new AlertDialog.Builder(requireContext())
-                .setTitle("Elige el robot")
-                .setItems(names, (d, w) -> {
-                    bt.selectDevice(devices[w]);
-                    b.tvDevice.setText("Dispositivo: " + names[w]);
-                    connectInBackground();
-                }).show();
+    private boolean containsDevice(BluetoothDevice d) {
+        for (BluetoothDevice x : found) {
+            if (x.getAddress().equals(d.getAddress())) return true;
+        }
+        return false;
     }
 
     private void connectInBackground() {
@@ -162,6 +224,10 @@ public class ProvisionFragment extends Fragment {
     @Override
     public void onDestroyView() {
         super.onDestroyView();
+        try {
+            requireContext().unregisterReceiver(receiver);
+        } catch (Exception ignored) {}
+        if (adapter != null && adapter.isDiscovering()) adapter.cancelDiscovery();
         bt.close();
         b = null;
     }
