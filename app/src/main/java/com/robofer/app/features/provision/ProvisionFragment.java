@@ -101,6 +101,42 @@ public class ProvisionFragment extends Fragment {
             b.tvStatus.setText("Faltan permisos Bluetooth");
             return;
         }
+        BluetoothDevice[] paired = bt.getPairedDevices();
+        if (paired.length > 0) {
+            showPairedDialog(paired);
+        } else {
+            startDiscovery();
+        }
+    }
+
+    private void showPairedDialog(BluetoothDevice[] devices) {
+        String[] names = new String[devices.length];
+        for (int i = 0; i < devices.length; i++) {
+            BluetoothDevice d = devices[i];
+            String n = d.getName();
+            if (n == null) n = d.getAddress();
+            names[i] = n + " (" + d.getAddress() + ")";
+        }
+        requireActivity().runOnUiThread(() -> {
+            new AlertDialog.Builder(requireContext())
+                    .setTitle("Elige el robot")
+                    .setItems(names, (dlg, w) -> {
+                        BluetoothDevice d = devices[w];
+                        bt.selectDevice(d);
+                        b.tvDevice.setText("Dispositivo: " + names[w]);
+                        if (d.getBondState() == BluetoothDevice.BOND_BONDED) {
+                            connectInBackground();
+                        } else {
+                            b.tvStatus.setText("Emparejando...");
+                            d.createBond();
+                        }
+                    })
+                    .setNegativeButton("Escanear", (d, w) -> startDiscovery())
+                    .show();
+        });
+    }
+
+    private void startDiscovery() {
         found.clear();
         if (adapter.isDiscovering()) adapter.cancelDiscovery();
         adapter.startDiscovery();

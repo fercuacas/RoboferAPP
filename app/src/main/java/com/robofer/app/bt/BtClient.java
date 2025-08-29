@@ -59,8 +59,14 @@ public class BtClient {
     public void connect() throws Exception {
         if (device == null) throw new IllegalStateException("No device selected");
         adapter.cancelDiscovery();
-        socket = device.createRfcommSocketToServiceRecord(UUID_SPP);
-        socket.connect();
+        try {
+            socket = device.createRfcommSocketToServiceRecord(UUID_SPP);
+            socket.connect();
+        } catch (SecurityException e) {
+            // Fall back to an insecure socket to rule out pairing issues.
+            socket = device.createInsecureRfcommSocketToServiceRecord(UUID_SPP);
+            socket.connect();
+        }
         in = socket.getInputStream();
         out = socket.getOutputStream();
     }
